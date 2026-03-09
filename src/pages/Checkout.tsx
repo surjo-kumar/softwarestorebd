@@ -1,16 +1,18 @@
 
 import { useEffect, useState } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useSearchParams, useNavigate, Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, ShieldCheck, Clock } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 import CheckoutForm from "@/components/checkout/CheckoutForm";
 import { formatPrice } from "@/lib/utils";
 import { motion } from "framer-motion";
+import { useCart } from "@/contexts/CartContext";
 
 export default function CheckoutPage() {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
+    const { items: cartItems, cartTotal, cartCount } = useCart();
     const id = searchParams.get("id");
     const durationParam = searchParams.get("duration") || "1 Month";
     const priceParam = searchParams.get("price");
@@ -35,8 +37,15 @@ export default function CheckoutPage() {
         };
         checkAuth();
 
-        if (!id) {
+        const isCartCheckout = !id && cartCount > 0;
+        
+        if (!id && !isCartCheckout) {
             navigate("/products");
+            return;
+        }
+
+        if (isCartCheckout) {
+            setLoading(false);
             return;
         }
 
@@ -59,14 +68,17 @@ export default function CheckoutPage() {
                 setLoading(false);
             }
         };
-        fetchProduct();
-    }, [id, navigate]);
 
-    if (loading) return <div className="p-12 text-center text-muted-foreground animate-pulse">Loading checkout...</div>;
-    if (!product) return <div className="p-12 text-center text-red-500">Product not found.</div>;
+        fetchProduct();
+    }, [id, navigate, cartCount]);
+
+    const isCartCheckout = !id && cartCount > 0;
+
+    if (loading && !isCartCheckout) return <div className="p-12 text-center text-muted-foreground animate-pulse">Loading checkout...</div>;
+    if (!product && !isCartCheckout) return <div className="p-12 text-center text-red-500">Product not found.</div>;
 
     // Calculate final price and duration with priority: URL Params -> Default Variant -> Lowest Variant -> Legacy Price
-    let computedPrice = product.price;
+    let computedPrice = product?.price || 0;
     let computedDuration = durationParam;
 
     if (priceParam) {
@@ -88,9 +100,11 @@ export default function CheckoutPage() {
         }
     }
 
-    // Safety check: Never allow 0 price checkout
+    // Safety check: Never allow 0 price checkout if not valid
     if (!computedPrice || computedPrice <= 0) {
-        return <div className="p-12 text-center text-red-500">Error: Product price is unavailable.</div>;
+        if (!isCartCheckout) {
+            return <div className="p-12 text-center text-red-500">Error: Product price is unavailable.</div>;
+        }
     }
 
     const finalPrice = computedPrice;
@@ -122,6 +136,7 @@ export default function CheckoutPage() {
                         finalPrice={finalPrice}
                         initialEmail={currentUser?.email}
                         initialName={currentUser?.user_metadata?.full_name}
+                        cartMode={isCartCheckout}
                     />
                     <div className="mt-4 text-center text-xs text-muted-foreground">
                         <p>Your privacy is our priority. We do not store your financial details.</p>
@@ -136,30 +151,60 @@ export default function CheckoutPage() {
                     className="space-y-6 lg:order-1"
                 >
                     <div className="bg-secondary/10 p-6 rounded-xl border border-border/50">
-                        <h2 className="text-xl font-semibold mb-4">Order Summary</h2>
-                        <div className="flex gap-4">
-                            <div className="h-24 w-24 bg-card rounded-lg p-2 flex items-center justify-center border shadow-sm">
-                                <img
-                                    src={product.thumbnail_url || product.image || "/placeholder.png"}
-                                    alt={product.title}
-                                    className="max-h-full max-w-full object-contain"
-                                />
-                            </div>
-                            <div>
-                                <h3 className="font-bold text-lg">{product.title}</h3>
-                                <Badge variant="secondary" className="mt-1">{product.category}</Badge>
-                                {(product.yearly_price) && (
-                                    <div className="flex items-center gap-1.5 mt-2 text-sm font-medium text-muted-foreground bg-background/50 px-2 py-0.5 rounded border">
-                                        <Clock className="w-3.5 h-3.5" />
-                                        <span>{finalDuration}</span>
-                                    </div>
-                                )}
-                            </div>
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-xl font-semibold">Order Summary</h2>
+                            {isCartCheckout && (
+                                <Link to="/cart" className="text-sm text-primary hover:underline flex items-center gap-1">
+                                    Edit Cart
+                                </Link>
+                            )}
                         </div>
+                        
+                        {isCartCheckout ? (
+                            <div className="space-y-4 mb-4">
+                                {cartItems.map(item => (
+                                    <div key={item.id} className="flex gap-4 p-3 bg-white rounded-lg border border-border/50 shadow-sm">
+                                        <div className="h-16 w-16 bg-card rounded flex items-center justify-center shrink-0 overflow-hidden">
+                                            <img src={item.thumbnail_url} alt={item.title} className="max-h-full max-w-full object-cover" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <h3 className="font-bold text-sm truncate">{item.title}</h3>
+                                            {item.duration && (
+                                                <Badge variant="secondary" className="mt-1 text-[10px]">{item.duration}</Badge>
+                                            )}
+                                            <div className="mt-1 flex justify-between items-center">
+                                                <span className="text-xs text-muted-foreground">Qty: {item.quantity}</span>
+                                                <span className="font-semibold text-sm">{formatPrice(item.price * item.quantity)}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="flex gap-4">
+                                <div className="h-24 w-24 bg-card rounded-lg p-2 flex items-center justify-center border shadow-sm">
+                                    <img
+                                        src={product?.thumbnail_url || product?.image || "/placeholder.png"}
+                                        alt={product?.title}
+                                        className="max-h-full max-w-full object-contain"
+                                    />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-lg">{product?.title}</h3>
+                                    <Badge variant="secondary" className="mt-1">{product?.category}</Badge>
+                                    {(product?.yearly_price) && (
+                                        <div className="flex items-center gap-1.5 mt-2 text-sm font-medium text-muted-foreground bg-background/50 px-2 py-0.5 rounded border">
+                                            <Clock className="w-3.5 h-3.5" />
+                                            <span>{finalDuration}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
 
                         <div className="mt-6 flex justify-between items-center py-4 border-t border-b border-border/50">
                             <span className="text-muted-foreground">Total to pay</span>
-                            <span className="text-2xl font-bold text-primary">{formatPrice(finalPrice)}</span>
+                            <span className="text-2xl font-bold text-primary">{formatPrice(isCartCheckout ? cartTotal : finalPrice)}</span>
                         </div>
 
                         <div className="mt-4 space-y-3 pt-2">

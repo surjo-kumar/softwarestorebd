@@ -10,11 +10,12 @@ import { useNavigate } from "react-router-dom";
 import { processCheckout } from "@/lib/checkout";
 import { formatPrice } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
+import { useCart } from "@/contexts/CartContext";
 import * as z from "zod";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface CheckoutFormProps {
-    product: {
+    product?: {
         id: string;
         title: string;
         price: number;
@@ -24,6 +25,7 @@ interface CheckoutFormProps {
     finalPrice?: number;
     initialEmail?: string;
     initialName?: string;
+    cartMode?: boolean;
 }
 
 const checkoutSchema = z.object({
@@ -35,7 +37,8 @@ const checkoutSchema = z.object({
 
 type FormData = z.infer<typeof checkoutSchema>;
 
-export default function CheckoutForm({ product, duration = "1 Month", finalPrice, initialEmail = "", initialName = "" }: CheckoutFormProps) {
+export default function CheckoutForm({ product, duration = "1 Month", finalPrice, initialEmail = "", initialName = "", cartMode = false }: CheckoutFormProps) {
+    const { items: cartItems, cartTotal, clearCart } = useCart();
     const navigate = useNavigate();
     const [isLoading, setIsLoading] = useState(false);
     const [paymentMethod, setPaymentMethod] = useState("bkash");
@@ -72,7 +75,7 @@ export default function CheckoutForm({ product, duration = "1 Month", finalPrice
         fetchPaymentNumbers();
     }, []);
 
-    const priceToPay = finalPrice || product.price;
+    const priceToPay = cartMode ? cartTotal : (finalPrice || product?.price || 0);
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target;
@@ -114,12 +117,17 @@ export default function CheckoutForm({ product, duration = "1 Month", finalPrice
         const payload = new FormData();
         payload.append("email", formData.email);
         payload.append("name", formData.name);
-        payload.append("productId", product.id);
-        payload.append("price", priceToPay.toString());
         payload.append("payment_method", paymentMethod);
-        payload.append("duration", duration);
         payload.append("transaction_id", formData.transactionId);
         payload.append("mobile_number", formData.mobileNumber);
+        
+        if (cartMode) {
+            payload.append("cartItems", JSON.stringify(cartItems));
+        } else if (product) {
+            payload.append("productId", product.id);
+            payload.append("price", priceToPay.toString());
+            payload.append("duration", duration);
+        }
 
         const result = await processCheckout(payload);
 
@@ -127,7 +135,8 @@ export default function CheckoutForm({ product, duration = "1 Month", finalPrice
             alert(result.error);
             setIsLoading(false);
         } else if (result?.success && result.orderId) {
-            navigate(`/checkout/success?orderId=${result.orderId}`);
+            if (cartMode) clearCart();
+            navigate(`/checkout/success?orderId=${result.orderId}${result.multiple ? '&multiple=true' : ''}`);
         } else {
             console.error("Unknown checkout result", result);
             setIsLoading(false);
@@ -209,10 +218,24 @@ export default function CheckoutForm({ product, duration = "1 Month", finalPrice
 
                     <div className="rounded-lg bg-muted/30 p-4 border border-border">
                         <h3 className="font-semibold mb-2 text-sm uppercase tracking-wide text-muted-foreground">Order Summary</h3>
-                        <div className="flex justify-between text-sm py-1">
-                            <span className="text-foreground/80">{product.title}</span>
-                            <span className="font-medium bg-secondary px-2 py-0.5 rounded text-xs">{duration}</span>
-                        </div>
+                        {cartMode ? (
+                            <div className="space-y-2 mb-2">
+                                {cartItems.map(item => (
+                                    <div key={item.id} className="flex justify-between text-sm py-1 border-b border-border/50 last:border-0">
+                                        <span className="text-foreground/80 pr-2 truncate">{item.title}</span>
+                                        <div className="flex items-center gap-2 whitespace-nowrap">
+                                            {item.duration && <span className="font-medium bg-secondary px-2 py-0.5 rounded text-[10px]">{item.duration}</span>}
+                                            <span className="font-medium">x{item.quantity}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="flex justify-between text-sm py-1">
+                                <span className="text-foreground/80">{product?.title}</span>
+                                <span className="font-medium bg-secondary px-2 py-0.5 rounded text-xs">{duration}</span>
+                            </div>
+                        )}
                         <div className="flex justify-between font-bold text-xl pt-3 border-t mt-2">
                             <span>Total</span>
                             <span className="text-primary">{formatPrice(priceToPay)}</span>
@@ -239,7 +262,7 @@ export default function CheckoutForm({ product, duration = "1 Month", finalPrice
                                 <div className="space-y-3">
                                     <div className={`text-sm border-l-4 ${helper.color} pl-3 py-1 bg-muted/20 rounded-r-sm`}>
                                         <p className="font-medium mb-1">{helper.type}: <span className="font-bold select-all text-base">{helper.number}</span></p>
-                                        <p className="text-muted-foreground text-xs">Send Money (Personal) • Reference: <span className="font-mono text-primary">{product.id.substring(0, 6)}</span></p>
+                                        <p className="text-muted-foreground text-xs">Send Money (Personal) • Reference: <span className="font-mono text-primary">{cartMode ? "Cart Order" : product?.id?.substring(0, 6)}</span></p>
                                     </div>
                                 </div>
 

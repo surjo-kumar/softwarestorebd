@@ -1,0 +1,14 @@
+src/components/layout/Header.tsx(4,84): error TS6133: 'ShieldCheck' is declared but its value is never read.
+src/components/layout/Header.tsx(4,97): error TS6133: 'Box' is declared but its value is never read.
+src/components/layout/Header.tsx(4,102): error TS6133: 'LogIn' is declared but its value is never read.
+src/components/layout/Header.tsx(4,109): error TS6133: 'Code' is declared but its value is never read.
+src/components/layout/Header.tsx(4,115): error TS6133: 'Monitor' is declared but its value is never read.
+src/components/layout/Header.tsx(4,124): error TS6133: 'Smartphone' is declared but its value is never read.
+src/components/layout/Header.tsx(4,136): error TS6133: 'Video' is declared but its value is never read.
+src/components/layout/Header.tsx(4,143): error TS6133: 'Camera' is declared but its value is never read.
+src/components/layout/Header.tsx(4,151): error TS6133: 'MoreHorizontal' is declared but its value is never read.
+src/components/layout/Header.tsx(4,167): error TS6133: 'MessageCircle' is declared but its value is never read.
+src/layouts/ShopLayout.tsx(6,1): error TS6133: 'FloatingWhatsApp' is declared but its value is never read.
+src/layouts/ShopLayout.tsx(6,34): error TS2307: Cannot find module 'react-floating-whatsapp' or its corresponding type declarations.
+src/pages/Checkout.tsx(5,44): error TS6133: 'ShoppingCart' is declared but its value is never read.
+src/pages/Checkout.tsx(9,18): error TS6133: 'AnimatePresence' is declared but its value is never read.

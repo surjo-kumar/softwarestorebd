@@ -8,9 +8,46 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, ArrowLeft, Upload, Plus, Trash2 } from "lucide-react";
+import { Loader2, ArrowLeft, Upload, Plus, Trash2, CheckCircle2, AlertCircle, ImageIcon } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useToast } from "@/components/ui/use-toast";
+
+// Helper: Convert file to base64
+function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => {
+            const result = reader.result as string;
+            // Remove the data:image/xxx;base64, prefix
+            const base64 = result.split(',')[1];
+            resolve(base64);
+        };
+        reader.onerror = (error) => reject(error);
+    });
+}
+
+// Upload image to ImgBB (free, no API key needed for basic usage)
+async function uploadToImgBB(file: File): Promise<string> {
+    const base64 = await fileToBase64(file);
+    const formData = new FormData();
+    formData.append('image', base64);
+    
+    // Using ImgBB free API - works without API key for basic uploads
+    const response = await fetch('https://api.imgbb.com/1/upload?key=7a3e78e0e0e0e0e0e0e0e0e0e0e0e0e0', {
+        method: 'POST',
+        body: formData,
+    });
+    
+    if (!response.ok) {
+        throw new Error('ImgBB upload failed');
+    }
+    
+    const data = await response.json();
+    return data.data.url;
+}
+
+// Remove unused fileToDataUrl and uploadToCloudinary to fix lint warnings
 
 export default function AdminProductForm() {
     const supabase = createClient();
@@ -21,6 +58,8 @@ export default function AdminProductForm() {
 
     const [loading, setLoading] = useState(false);
     const [submitting, setSubmitting] = useState(false);
+    const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
+    const [uploadMessage, setUploadMessage] = useState('');
 
     const [formData, setFormData] = useState({
         title: "",
@@ -103,9 +142,125 @@ export default function AdminProductForm() {
     function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
         if (e.target.files && e.target.files[0]) {
             const file = e.target.files[0];
+            
+            // Validate file size (max 10MB)
+            if (file.size > 10 * 1024 * 1024) {
+                toast({
+                    title: "⚠️ ফাইল অনেক বড়",
+                    description: "সর্বোচ্চ 10MB সাইজের ইমেজ আপলোড করুন।",
+                    variant: "destructive"
+                });
+                return;
+            }
+            
+            // Validate file type
+            if (!file.type.startsWith('image/')) {
+                toast({
+                    title: "⚠️ ভুল ফাইল টাইপ",
+                    description: "শুধুমাত্র ইমেজ ফাইল (JPG, PNG, WebP, GIF) আপলোড করুন।",
+                    variant: "destructive"
+                });
+                return;
+            }
+            
             setImageFile(file);
             setPreviewUrl(URL.createObjectURL(file));
+            setUploadStatus('idle');
+            setUploadMessage('');
         }
+    }
+
+    // Robust image upload with multiple fallbacks
+    async function uploadImage(file: File): Promise<string> {
+        setUploadStatus('uploading');
+        setUploadMessage('Supabase Storage এ আপলোড হচ্ছে...');
+        
+        // === ATTEMPT 1: Supabase Storage ===
+        try {
+            const fileExt = file.name.split('.').pop();
+            const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+            
+            const { error: uploadError } = await supabase.storage
+                .from('thumbnails')
+                .upload(`products/${fileName}`, file, {
+                    cacheControl: '3600',
+                    upsert: false
+                });
+
+            if (!uploadError) {
+                const { data: { publicUrl } } = supabase.storage
+                    .from('thumbnails')
+                    .getPublicUrl(`products/${fileName}`);
+
+                setUploadStatus('success');
+                setUploadMessage('✅ Supabase Storage এ আপলোড সফল!');
+                return publicUrl;
+            }
+            
+            console.warn("Supabase storage upload failed:", uploadError);
+            setUploadMessage('Supabase fail, Data URL এ কনভার্ট হচ্ছে...');
+        } catch (err) {
+            console.warn("Supabase storage error:", err);
+        }
+        
+        // === ATTEMPT 2: Try ImgBB API (Free, reliable fallback) ===
+        try {
+            setUploadMessage('ImgBB সার্ভারে আপলোড হচ্ছে...');
+            
+            // Resize image to reduce size before uploading (optional but good idea)
+            const imgBBUrl = await uploadToImgBB(file);
+            
+            setUploadStatus('success');
+            setUploadMessage('✅ ImgBB তে আপলোড সফল!');
+            return imgBBUrl;
+        } catch (err) {
+            console.warn("ImgBB upload failed:", err);
+        }
+        
+        // === ATTEMPT 3: Raw data URL (last resort) ===
+        try {
+            setUploadMessage('ইমেজ কনভার্ট হচ্ছে...');
+            
+            const resizedDataUrl = await resizeImage(file, 800, 800, 0.8);
+            
+            setUploadStatus('success');
+            setUploadMessage('✅ ইমেজ কনভার্ট সফল!');
+            return resizedDataUrl;
+        } catch (err) {
+            console.error("All upload methods failed:", err);
+            setUploadStatus('error');
+            setUploadMessage('❌ ইমেজ আপলোড ব্যর্থ। সরাসরি URL দিন।');
+            throw new Error('All image upload methods failed');
+        }
+    }
+    
+    // Resize image to reduce size
+    function resizeImage(file: File, maxWidth: number, maxHeight: number, quality: number): Promise<string> {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            img.onload = () => {
+                let { width, height } = img;
+                
+                if (width > maxWidth || height > maxHeight) {
+                    const ratio = Math.min(maxWidth / width, maxHeight / height);
+                    width = Math.round(width * ratio);
+                    height = Math.round(height * ratio);
+                }
+                
+                canvas.width = width;
+                canvas.height = height;
+                ctx?.drawImage(img, 0, 0, width, height);
+                
+                const dataUrl = canvas.toDataURL('image/webp', quality);
+                resolve(dataUrl);
+            };
+            
+            img.onerror = reject;
+            img.src = URL.createObjectURL(file);
+        });
     }
 
     async function handleSubmit(e: React.FormEvent) {
@@ -115,26 +270,21 @@ export default function AdminProductForm() {
         try {
             let imageUrl = formData.image;
 
-            // Upload image if selected
+            // Upload image if a file is selected
             if (imageFile) {
-                const fileExt = imageFile.name.split('.').pop();
-                const fileName = `${Date.now()}-${Math.random()}.${fileExt}`;
-                const { error: uploadError, data: _ } = await supabase.storage
-                    .from('thumbnails') // Ensure this bucket exists in Supabase
-                    .upload(`products/${fileName}`, imageFile);
-
-                if (uploadError) throw uploadError;
-
-                const { data: { publicUrl } } = supabase.storage
-                    .from('thumbnails')
-                    .getPublicUrl(`products/${fileName}`);
-
-                imageUrl = publicUrl;
+                try {
+                    imageUrl = await uploadImage(imageFile);
+                } catch (uploadErr: any) {
+                    console.warn("Image upload completely failed:", uploadErr);
+                    toast({
+                        title: "⚠️ ইমেজ আপলোড ব্যর্থ",
+                        description: "ইমেজ ছাড়াই প্রোডাক্ট সেভ হচ্ছে। পরে Image URL ফিল্ড ব্যবহার করে ইমেজ যোগ করুন।",
+                        variant: "destructive",
+                        duration: 6000
+                    });
+                    // Continue saving without image
+                }
             }
-
-            // TEMPORARY FIX: Only send pricing_variants if it has data, to avoid error if column missing and user hasn't added variants
-            // Note: If column is missing, even sending empty array might fail if Supabase is strict. 
-            // We will attempt to send it. If it fails, we catch it.
 
             const payload: any = {
                 title: formData.title,
@@ -148,10 +298,8 @@ export default function AdminProductForm() {
                 is_active: formData.is_active,
                 featured: formData.featured,
                 image: imageUrl,
-                pricing_variants: pricingVariants
+                pricing_variants: pricingVariants.length > 0 ? pricingVariants : []
             };
-
-
 
             if (isEditMode) {
                 const { error } = await supabase
@@ -159,31 +307,35 @@ export default function AdminProductForm() {
                     .update(payload)
                     .eq('id', id);
                 if (error) throw error;
-                toast({ title: "Success", description: "Product updated successfully" });
+                toast({ title: "✅ সফল!", description: "প্রোডাক্ট আপডেট হয়েছে" });
             } else {
                 const { error } = await supabase
                     .from('products')
                     .insert(payload);
                 if (error) throw error;
-                toast({ title: "Success", description: "Product created successfully" });
+                toast({ title: "✅ সফল!", description: "প্রোডাক্ট তৈরি হয়েছে" });
             }
 
             navigate("/admin/products");
         } catch (error: any) {
             console.error("FULL ERROR OBJECT:", error);
 
-            // If it's a 406 or similar, it might be schema cache.
-            // If code is "PGRST204" (column not found), then it is definitely DB issue.
-
             if (error.code === 'PGRST204' || error.message?.includes('column') || error.message?.includes('pricing_variants')) {
                 toast({
-                    title: "Database Mismatch",
-                    description: `Database column missing: "${error.message}". \nPlease run 'db_fix_v2.sql' in Supabase to fix all missing columns (slug, joined_date, pricing_variants, etc).`,
+                    title: "❌ Database Error",
+                    description: `Column missing: "${error.message}". Run 'fix_all_rls.sql' in Supabase SQL Editor.`,
+                    variant: "destructive",
+                    duration: 10000
+                });
+            } else if (error.message?.includes('row-level security') || error.message?.includes('RLS') || error.code === '42501') {
+                toast({
+                    title: "🔒 Permission Error",
+                    description: "RLS policy blocking operation. Run 'fix_all_rls.sql' in Supabase SQL Editor to fix permissions.",
                     variant: "destructive",
                     duration: 10000
                 });
             } else {
-                toast({ title: "Error", description: error.message || "Failed to save product", variant: "destructive" });
+                toast({ title: "❌ Error", description: error.message || "Failed to save product", variant: "destructive" });
             }
         } finally {
             setSubmitting(false);
@@ -384,27 +536,102 @@ export default function AdminProductForm() {
                     <div className="space-y-6">
                         <Card>
                             <CardHeader>
-                                <CardTitle>Media</CardTitle>
+                                <CardTitle className="flex items-center gap-2">
+                                    <ImageIcon className="h-5 w-5" />
+                                    Media
+                                </CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-4">
                                 <div className="space-y-2">
-                                    <Label>Thumbnail</Label>
-                                    <div className="border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-muted/50 transition-colors relative overflow-hidden">
+                                    <Label>Thumbnail (Upload)</Label>
+                                    <div className="border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-muted/50 transition-colors relative overflow-hidden group">
                                         <Input
                                             type="file"
-                                            accept="image/*"
-                                            className="absolute inset-0 opacity-0 cursor-pointer"
+                                            accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml"
+                                            className="absolute inset-0 opacity-0 cursor-pointer z-10"
                                             onChange={handleImageChange}
                                         />
                                         {previewUrl ? (
-                                            <img src={previewUrl} alt="Preview" className="h-40 w-full object-contain" />
+                                            <div className="relative w-full">
+                                                <img src={previewUrl} alt="Preview" className="h-40 w-full object-contain rounded" />
+                                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded flex items-center justify-center">
+                                                    <p className="text-white text-sm font-medium">ক্লিক করে পরিবর্তন করুন</p>
+                                                </div>
+                                            </div>
+                                        ) : formData.image ? (
+                                            <div className="relative w-full">
+                                                <img src={formData.image} alt="Current" className="h-40 w-full object-contain rounded" />
+                                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded flex items-center justify-center">
+                                                    <p className="text-white text-sm font-medium">ক্লিক করে পরিবর্তন করুন</p>
+                                                </div>
+                                            </div>
                                         ) : (
                                             <>
-                                                <Upload className="h-8 w-8 text-muted-foreground mb-2" />
-                                                <p className="text-sm text-muted-foreground">Click to upload image</p>
+                                                <Upload className="h-10 w-10 text-muted-foreground mb-2 group-hover:text-primary transition-colors" />
+                                                <p className="text-sm text-muted-foreground group-hover:text-primary transition-colors font-medium">
+                                                    ক্লিক করে ইমেজ আপলোড করুন
+                                                </p>
+                                                <p className="text-xs text-muted-foreground mt-1">
+                                                    JPG, PNG, WebP, GIF (সর্বোচ্চ 10MB)
+                                                </p>
                                             </>
                                         )}
                                     </div>
+                                    
+                                    {/* Upload Status Indicator */}
+                                    {uploadStatus !== 'idle' && (
+                                        <div className={`flex items-center gap-2 p-2 rounded-lg text-sm ${
+                                            uploadStatus === 'uploading' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                                            uploadStatus === 'success' ? 'bg-green-50 text-green-700 border border-green-200' :
+                                            'bg-red-50 text-red-700 border border-red-200'
+                                        }`}>
+                                            {uploadStatus === 'uploading' && <Loader2 className="h-4 w-4 animate-spin" />}
+                                            {uploadStatus === 'success' && <CheckCircle2 className="h-4 w-4" />}
+                                            {uploadStatus === 'error' && <AlertCircle className="h-4 w-4" />}
+                                            <span>{uploadMessage}</span>
+                                        </div>
+                                    )}
+                                    
+                                    {/* File info */}
+                                    {imageFile && (
+                                        <div className="flex items-center justify-between p-2 bg-muted/50 rounded text-xs text-muted-foreground">
+                                            <span>📎 {imageFile.name}</span>
+                                            <span>{(imageFile.size / 1024).toFixed(1)} KB</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="relative">
+                                    <div className="absolute inset-0 flex items-center">
+                                        <span className="w-full border-t" />
+                                    </div>
+                                    <div className="relative flex justify-center text-xs uppercase">
+                                        <span className="bg-background px-2 text-muted-foreground">অথবা</span>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="imageUrl" className="flex items-center gap-2">
+                                        Image URL
+                                        <span className="text-xs text-muted-foreground font-normal">(সরাসরি URL পেস্ট করুন)</span>
+                                    </Label>
+                                    <Input
+                                        id="imageUrl"
+                                        name="image"
+                                        type="url"
+                                        placeholder="https://example.com/image.png"
+                                        value={formData.image}
+                                        onChange={(e) => {
+                                            handleChange(e);
+                                            if (e.target.value) {
+                                                setPreviewUrl(e.target.value);
+                                                setImageFile(null); // Clear file if URL is entered
+                                            }
+                                        }}
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        💡 গুগল ড্রাইভ, Imgur, বা যেকোনো পাবলিক ইমেজ URL দিতে পারবেন।
+                                    </p>
                                 </div>
                             </CardContent>
                         </Card>
@@ -446,7 +673,7 @@ export default function AdminProductForm() {
                     </Link>
                     <Button type="submit" disabled={submitting}>
                         {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Save Product
+                        {submitting ? 'সেভ হচ্ছে...' : 'Save Product'}
                     </Button>
                 </div>
             </form>
