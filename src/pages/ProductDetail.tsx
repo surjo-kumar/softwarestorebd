@@ -27,6 +27,7 @@ export default function ProductDetailsPage() {
     const [reviewRating, setReviewRating] = useState(5);
     const [reviewName, setReviewName] = useState("");
     const [reviewText, setReviewText] = useState("");
+    const [cartNotification, setCartNotification] = useState(false);
 
     useEffect(() => {
         const fetchSettings = async () => {
@@ -108,9 +109,9 @@ export default function ProductDetailsPage() {
             duration: variants.length > 0 ? duration : undefined,
             quantity: quantity
         });
-        
-        // Optional: show a small toast or visual feedback here
-        alert("Success! Product added to cart.");
+
+        setCartNotification(true);
+        setTimeout(() => setCartNotification(false), 2000);
     };
 
     if (loading) {
@@ -149,6 +150,20 @@ export default function ProductDetailsPage() {
 
     return (
         <div className="min-h-screen bg-white pb-bottom-nav">
+            {/* Cart Added Toast */}
+            <AnimatePresence>
+                {cartNotification && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -50 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -50 }}
+                        className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] bg-green-500 text-white px-6 py-3 rounded-xl shadow-xl shadow-green-500/30 flex items-center gap-2 font-semibold text-sm"
+                    >
+                        <Check className="h-5 w-5" />
+                        কার্টে যোগ হয়েছে!
+                    </motion.div>
+                )}
+            </AnimatePresence>
             {/* ===== Breadcrumb ===== */}
             <div className="bg-gray-50 border-b">
                 <div className="max-w-6xl mx-auto px-4 py-2.5">
@@ -266,11 +281,10 @@ export default function ProductDetailsPage() {
                                         <button
                                             key={v.label}
                                             onClick={() => handleVariantChange(v)}
-                                            className={`relative py-3 px-3 rounded-xl text-center transition-all duration-200 border-2 ${
-                                                duration === v.label
-                                                    ? "border-primary bg-primary/5 shadow-md"
-                                                    : "border-gray-200 bg-white hover:border-primary/40"
-                                            }`}
+                                            className={`relative py-3 px-3 rounded-xl text-center transition-all duration-200 border-2 ${duration === v.label
+                                                ? "border-primary bg-primary/5 shadow-md"
+                                                : "border-gray-200 bg-white hover:border-primary/40"
+                                                }`}
                                         >
                                             {duration === v.label && (
                                                 <div className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-primary rounded-full flex items-center justify-center shadow">
@@ -320,7 +334,7 @@ export default function ProductDetailsPage() {
                                     এখনই কিনুন
                                 </motion.button>
                             </Link>
-                            <button 
+                            <button
                                 onClick={handleAddToCart}
                                 className="w-full py-3.5 bg-white text-primary font-bold text-base rounded-xl border-2 border-primary flex items-center justify-center gap-2 hover:bg-primary/5 transition-colors"
                             >
@@ -405,11 +419,10 @@ export default function ProductDetailsPage() {
                             <button
                                 key={tab.key}
                                 onClick={() => setActiveTab(tab.key as any)}
-                                className={`py-3 px-4 text-sm font-semibold border-b-2 transition-all whitespace-nowrap ${
-                                    activeTab === tab.key
-                                        ? "border-primary text-primary"
-                                        : "border-transparent text-gray-500 hover:text-gray-700"
-                                }`}
+                                className={`py-3 px-4 text-sm font-semibold border-b-2 transition-all whitespace-nowrap ${activeTab === tab.key
+                                    ? "border-primary text-primary"
+                                    : "border-transparent text-gray-500 hover:text-gray-700"
+                                    }`}
                             >
                                 {tab.label}
                             </button>
